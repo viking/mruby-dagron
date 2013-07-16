@@ -344,13 +344,14 @@ module Dagron
         end
       end
 
-      ok = true
+      result = nil
       begin
         @db.execute_batch('INSERT INTO maps (name, data, filename) VALUES(?, ?, ?)', name, data, filename)
-      rescue
-        ok = false
+        result = { 'success' => true }
+      rescue Exception => e
+        result = { 'success' => false, 'error' => e.message }
       end
-      [200, {'Content-Type' => "application/json"}, JSON.stringify({ 'success' => true })]
+      [200, {'Content-Type' => "application/json"}, JSON.stringify(result)]
     end
 
     def serve(env)
@@ -414,7 +415,7 @@ module Dagron
 
       result = nil
       if path == ""
-        result = index
+        result = index(env)
       elsif path == "maps"
         if env['REQUEST_METHOD'] == 'POST'
           result = new_map(env)
