@@ -323,8 +323,12 @@ module Dagron
 
     def maps(env)
       maps = []
-      @db.execute('SELECT * FROM maps') do |row, fields|
-        maps << row
+      @db.execute('SELECT id, name FROM maps') do |row, fields|
+        hash = {}
+        fields.each_with_index do |field, i|
+          hash[field] = row[i]
+        end
+        maps << hash
       end
       body = JSON.stringify(maps)
       [200, {'Content-Type' => 'application/json'}, body]
