@@ -22,62 +22,78 @@ module Dagron
         return if status != 0
 
         conn = socket.accept()
+        request_buf = nil
         conn.read_start do |buf|
           if buf
-            request = parser.parse_request(buf)
+            if request_buf
+              request_buf += buf
+            else
+              request_buf = buf
+            end
+            request = parser.parse_request(request_buf)
+            ok = true
+            if request.headers['Content-Length']
+              len = request.headers['Content-Length'].to_i
+              ok = request.body && request.body.size >= len
+            end
 
-            # Find application
-            app = nil
-            script_name = nil
-            path_info = nil
-            server.apps.each do |entry|
-              len = entry[0].length
-              if request.path[0, len] == entry[0]
-                app = entry[1]
-                script_name = entry[0]
-                path_info = request.path[len..-1]
-                break
+            if ok
+              request_buf = nil
+
+              # Find application
+              app = nil
+              script_name = nil
+              path_info = nil
+              server.apps.each do |entry|
+                len = entry[0].length
+                if request.path[0, len] == entry[0]
+                  app = entry[1]
+                  script_name = entry[0]
+                  path_info = request.path[len..-1]
+                  break
+                end
               end
-            end
 
-            # Respond
-            status, headers, body =
-              if app
-                sockname = conn.getsockname
-                env = {
-                  'REQUEST_METHOD' => request.method,
-                  'SCRIPT_NAME' => script_name,
-                  'PATH_INFO' => path_info,
-                  'QUERY_STRING' => request.query,
-                  'SERVER_NAME' => @server_name ? @server_name : sockname.sin_addr,
-                  'SERVER_PORT' => sockname.sin_port,
-                  'HTTP_HOST' => request.headers['Host']
-                }
-                #p env
-                app.call(env)
-              else
-                [ 404, nil, "Not found" ]
+              # Respond
+              status, headers, body =
+                if app
+                  sockname = conn.getsockname
+                  env = {
+                    'REQUEST_METHOD' => request.method,
+                    'SCRIPT_NAME' => script_name,
+                    'PATH_INFO' => path_info,
+                    'QUERY_STRING' => request.query,
+                    'SERVER_NAME' => @server_name ? @server_name : sockname.sin_addr,
+                    'SERVER_PORT' => sockname.sin_port,
+                    'HTTP_HOST' => request.headers['Host'],
+                    'params' => server.params(request)
+                  }
+                  #p env
+                  app.call(env)
+                else
+                  [ 404, nil, "Not found" ]
+                end
+              #puts "Status: #{status.inspect}, Headers: #{headers.inspect}, Body: #{body.inspect}"
+              headers ||= {}
+              close = false
+
+              if !request.headers.has_key?('Connection') || request.headers['Connection'] != 'Keep-Alive'
+                headers['Connection'] = 'close'
+                close = true
               end
-            #puts "Status: #{status.inspect}, Headers: #{headers.inspect}, Body: #{body.inspect}"
-            headers ||= {}
-            close = false
+              headers['Content-Length'] = body.size
 
-            if !request.headers.has_key?('Connection') || request.headers['Connection'] != 'Keep-Alive'
-              headers['Connection'] = 'close'
-              close = true
-            end
-            headers['Content-Length'] = body.size
+              data = "HTTP/1.1 #{status} #{server.reason_phrase(status)}\r\n"
+              headers.each do |key, value|
+                data += "#{key}: #{value}\r\n"
+              end
+              data += "\r\n#{body}"
 
-            data = "HTTP/1.1 #{status} #{server.reason_phrase(status)}\r\n"
-            headers.each do |key, value|
-              data += "#{key}: #{value}\r\n"
-            end
-            data += "\r\n#{body}"
-
-            conn.write(data) do |status|
-              if close
-                conn.close() if conn
-                conn = nil
+              conn.write(data) do |status|
+                if close
+                  conn.close() if conn
+                  conn = nil
+                end
               end
             end
           end
@@ -149,27 +165,126 @@ module Dagron
       when 505 then "HTTP Version not supported"
       end
     end
+
+    def params(request)
+      result = []
+      if request.method == "GET"
+        if request.query
+          request.query.split("&").each do |segment|
+            key, value = segment.split("=", 2)
+            result.push({:name => key, :value => value})
+          end
+        end
+      elsif request.method == "POST"
+        if request.headers.has_key?('Content-Type')
+          type, options = request.headers['Content-Type'].split(";", 2)
+          if type == "multipart/form-data" && options
+            boundary = nil
+            options.split(";").each do |parameter|
+              key, value = parameter.split("=", 2)
+              if key.strip == "boundary"
+                boundary = "--" + value
+                break
+              end
+            end
+            if boundary
+              index = request.body.index(boundary)
+              while index
+                lower = index + boundary.length
+                upper = request.body.index(boundary, lower)
+                break if upper.nil?
+
+                part = request.body[lower...upper]
+                if part[0..1] == "\r\n"
+                  parse_result = parse_part(part)
+                  if parse_result
+                    result.push(parse_result)
+                  else
+                    break
+                  end
+                else
+                  break
+                end
+
+                index = upper
+              end
+            end
+          end
+        end
+      end
+      result
+    end
+
+    def parse_part(part)
+      type = nil
+      result = {}
+      index = part.index("\r\n")
+      while index
+        lower = index + 2
+        upper = part.index("\r\n", lower)
+        break if upper.nil?
+
+        if lower == upper
+          lower = upper + 2
+          upper = part.index("\r\n", lower)
+          upper = upper.nil? ? -1 : upper - 1
+          data = part[lower..upper]
+
+          #case type
+          #when nil
+            #result[:value] = data
+          #when "application/octet-stream"
+            #result[:value] = Base64.decode(data)
+          #end
+          result[:value] = data
+          break
+        else
+          line = part[lower...upper]
+          key, value = line.split(": ", 2)
+          case key
+          when "Content-Disposition"
+            disp, parameters = value.split("; ", 2)
+            break if disp != "form-data"
+            parameters.split("; ").each do |parameter|
+              key, value = parameter.split("=", 2)
+              if value[0] == '"' && value[-1] == '"'
+                value = value[1..-2]
+              end
+
+              case key
+              when "name"
+                result[:name] = value
+              when "filename"
+                result[:filename] = value
+              end
+            end
+          when "Content-Type"
+            type = value
+          end
+          index = upper
+        end
+      end
+
+      if result.has_key?(:name) && result.has_key?(:value)
+        return result
+      end
+      nil
+    end
   end
 
   class App
     DB_VERSION = 1
-    INDEX_VIEW = '<!DOCTYPE html>
-<html lang="en">
 
-<head>
-  <meta charset="utf-8">
-  <title>Dagron</title>
-  <script type="text/javascript" src="static/underscore-min.js"></script>
-  <script type="text/javascript" src="static/backbone-min.js"></script>
-</head>
-
-<body>
-sup?
-</body>
-</html>'
-
-    def initialize(root)
+    def initialize(root, options = {})
       @root = root
+
+      # read index
+      if options[:environment] == 'production'
+        f = UV::FS.open("#{@root}/views/index.html", UV::FS::O_RDONLY, UV::FS::S_IREAD)
+        @index = f.read
+        f.close
+      end
+
       @db = SQLite3::Database.new("#{root}/dagron.db")
       migrate!
     end
@@ -186,13 +301,108 @@ sup?
       while version < DB_VERSION
         case version
         when 0
-          @db.execute_batch("CREATE TABLE schema_info (version INT)")
-          @db.execute_batch("CREATE TABLE maps (id INT PRIMARY KEY, name TEXT, data BLOB)")
-          @db.execute_batch("CREATE TABLE images (id INT PRIMARY KEY, name TEXT, data BLOB)")
+          @db.execute_batch("CREATE TABLE schema_info (version INTEGER)")
+          @db.execute_batch("CREATE TABLE maps (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, data BLOB, filename TEXT)")
+          @db.execute_batch("CREATE TABLE images (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, data BLOB, filename TEXT)")
         end
         version += 1
         @db.execute_batch("DELETE FROM schema_info; INSERT INTO schema_info VALUES (#{version})")
       end
+    end
+
+    def index(env)
+      if @index
+        body = @index
+      else
+        f = UV::FS.open("#{@root}/views/index.html", UV::FS::O_RDONLY, UV::FS::S_IREAD)
+        body = f.read
+        f.close
+      end
+      [200, {'Content-Type' => 'text/html'}, body]
+    end
+
+    def maps(env)
+      maps = []
+      @db.execute('SELECT * FROM maps') do |row, fields|
+        maps << row
+      end
+      body = JSON.stringify(maps)
+      [200, {'Content-Type' => 'application/json'}, body]
+    end
+
+    def new_map(env)
+      name = nil
+      data = nil
+      filename = nil
+      env['params'].each do |param|
+        case param[:name]
+        when "map[name]"
+          name = param[:value]
+        when "map[file]"
+          data = param[:value]
+          filename = param[:filename]
+        end
+      end
+
+      ok = true
+      begin
+        @db.execute_batch('INSERT INTO maps (name, data, filename) VALUES(?, ?, ?)', name, data, filename)
+      rescue
+        ok = false
+      end
+      [200, {'Content-Type' => "application/json"}, JSON.stringify({ 'success' => true })]
+    end
+
+    def serve(env)
+      path = env["PATH_INFO"]
+
+      # Ensure there's no trickery
+      filename = []
+      parts = path[7..-1].split("/")
+      parts.each do |part|
+        if part == ".."
+          if filename.empty?
+            return app.not_found
+          end
+          filename.pop
+        else
+          filename.push(part)
+        end
+      end
+      filename = filename.join("/")
+
+      type =
+        case filename.split('.')[-1]
+        when 'css'
+          "text/css"
+        when 'js'
+          "text/javascript"
+        else
+          "text/plain"
+        end
+
+      f = nil
+      body = ""
+      begin
+        f = UV::FS.open("#{@root}/static/#{filename}", UV::FS::O_RDONLY, UV::FS::S_IREAD)
+      rescue RuntimeError => e
+        return not_found
+      end
+
+      begin
+        loop do
+          data = f.read(4096, body.size)
+          if data.size > 0
+            body += data
+          else
+            break
+          end
+        end
+        result = [200, {'Content-Type' => type}, body]
+      ensure
+        f.close if f
+      end
+      result
     end
 
     def call(env)
@@ -204,54 +414,15 @@ sup?
 
       result = nil
       if path == ""
-        result = [200, {'Content-Type' => 'text/html'}, App::INDEX_VIEW]
+        result = index
+      elsif path == "maps"
+        if env['REQUEST_METHOD'] == 'POST'
+          result = new_map(env)
+        else
+          result = maps(env)
+        end
       elsif path[0..6] == "static/"
-        # Ensure there's no trickery
-        filename = []
-        parts = path[7..-1].split("/")
-        parts.each do |part|
-          if part == ".."
-            if filename.empty?
-              return app.not_found
-            end
-            filename.pop
-          else
-            filename.push(part)
-          end
-        end
-        filename = filename.join("/")
-
-        type =
-          case filename.split('.')[-1]
-          when 'css'
-            "text/css"
-          when 'js'
-            "text/javascript"
-          else
-            "text/plain"
-          end
-
-        f = nil
-        body = ""
-        begin
-          f = UV::FS.open("#{@root}/static/#{filename}", UV::FS::O_RDONLY, UV::FS::S_IREAD)
-        rescue RuntimeError => e
-          return not_found
-        end
-
-        begin
-          loop do
-            data = f.read(4096, body.size)
-            if data.size > 0
-              body += data
-            else
-              break
-            end
-          end
-          result = [200, {'Content-Type' => type}, body]
-        ensure
-          f.close if f
-        end
+        result = serve(env)
       end
 
       if result

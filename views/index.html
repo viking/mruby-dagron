@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+<meta charset="utf-8">
+<title>Dagron</title>
+<script type="text/javascript" src="static/jquery-2.0.3.min.js"></script>
+<script type="text/javascript" src="static/underscore-min.js"></script>
+<script type="text/javascript" src="static/backbone-min.js"></script>
+<script type="text/javascript" src="static/skel.min.js">{preset:"default"}</script>
+<link rel="stylesheet" type="text/css" href="static/style.css"/>
+</head>
+
+<body>
+
+<div id="app">
+  <header>
+    <h1>Maps</h1>
+  </header>
+
+  <section id="maps">
+  </section>
+
+  <section id="new-map">
+    <h2>New map</h2>
+    <form action="maps" method="post" enctype="multipart/form-data">
+      <div class="row">
+        <div class="4u">
+          <label>Name: <input name="map[name]" type="text"/></label>
+        </div>
+        <div class="4u">
+          <label>Map: <input name="map[file]" type="file"/></label>
+        </div>
+        <div class="4u">
+          <input type="submit" />
+        </div>
+      </div>
+    </form>
+  </section>
+</div>
+
+<script type="text/template" id="map-template">
+<div class="4u"><%= name %></div>
+<div class="4u"><%= url %></div>
+</script>
+
+<script type="text/javascript">
+$(function() {
+  var Map = Backbone.Model.extend({
+    defaults: function() {
+      return {
+        name: "New map"
+      }
+    }
+  });
+
+  var MapList = Backbone.Collection.extend({
+    model: Map,
+    url: '/maps'
+  });
+  var Maps = new MapList;
+
+  var MapView = Backbone.View.extend({
+    tagName: 'div',
+    className: 'row',
+    template: _.template($('#map-template').html()),
+    initialize: function() {
+      this.listenTo(this.model, 'change', this.render);
+      this.listenTo(this.model, 'destroy', this.remove);
+    },
+    render: function() {
+      this.$el.html(this.template(this.model.attributes));
+      return this;
+    }
+  });
+
+  var AppView = Backbone.View.extend({
+    el: $('#app'),
+    initialize: function() {
+      this.listenTo(Maps, 'add', this.addOne);
+      this.listenTo(Maps, 'reset', this.addAll);
+      this.listenTo(Maps, 'all', this.render);
+      Maps.fetch();
+    },
+    addOne: function(map) {
+      var view = new MapView({model: view});
+      this.$("#maps").append(view.render().el);
+    },
+    addAll: function() {
+      Maps.each(this.addOne, this);
+    },
+  });
+  var App = new AppView;
+});
+</script>
+</body>
+</html>
