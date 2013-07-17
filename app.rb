@@ -272,6 +272,175 @@ module Dagron
     end
   end
 
+  class Image
+    attr_reader :source, :width, :height, :errors
+
+    def initialize
+      @errors = []
+    end
+
+    def process(element)
+      if element.name != "image"
+        @errors << "element wasn't image"
+        return false
+      end
+
+      @source = element.attribute("source")
+      begin
+        @width = element.int_attribute("width")
+        @height = element.int_attribute("height")
+      rescue RuntimeError
+        @errors << "image element had invalid attributes"
+      end
+
+      @errors.empty?
+    end
+  end
+
+  class Tileset
+    attr_reader :name, :source, :firstgid, :tilewidth, :tileheight, :image, :errors
+    def initialize
+      @errors = []
+    end
+
+    def process(element)
+      if element.name != "tileset"
+        @errors << "element wasn't tileset"
+        return false
+      end
+
+      @name = element.attribute("name")
+      @source = element.attribute("source")
+      begin
+        @firstgid = element.int_attribute("firstgid")
+        @tilewidth = element.int_attribute("tilewidth")
+        @tileheight = element.int_attribute("tileheight")
+      rescue RuntimeError
+        @errors << "tileset element had invalid attributes"
+      end
+
+      if @source
+        # TODO: handle case when source exists instead of name
+      end
+
+      @image = nil
+
+      child = element.first_child_element
+      while child
+        if child.name == "image"
+          if @image
+            @errors << "tileset had multiple images"
+          else
+            @image = Image.new
+            if !@image.process(child)
+              @errors << "image was invalid"
+            end
+          end
+        end
+        child = child.next_sibling_element
+      end
+
+      if @image.nil?
+        @errors << "tileset didn't have an image"
+      end
+
+      @errors.empty?
+    end
+  end
+
+  class Layer
+    attr_reader :name, :width, :height
+    def initialize
+      @errors = []
+    end
+
+    def process(element)
+      if element.name != "layer"
+        @errors << "element wasn't a layer"
+        return false
+      end
+
+      @name = element.attribute('name')
+      begin
+        @width = element.int_attribute("width")
+        @height = element.int_attribute("height")
+      rescue RuntimeError
+        @errors << "layer element had invalid attributes"
+      end
+
+      @errors.empty?
+    end
+  end
+
+  class Map
+    attr_reader :width, :height, :tilewidth, :tileheight, :tilesets, :layers, :errors
+
+    def initialize
+      @errors = []
+    end
+
+    def parse(data)
+      doc = TinyXML2::XMLDocument.new
+      if doc.parse(data) != :XML_SUCCESS
+        @errors << "xml parsing error"
+        return false
+      end
+
+      process(doc.root_element)
+    end
+
+    def process(element)
+      if element.name != "map"
+        @errors << "element wasn't map"
+        return false
+      end
+
+      if element.attribute("orientation") != "orthogonal"
+        @errors << 'expected map orientation attribute to be "orthogonal"'
+      end
+
+      begin
+        @width = element.int_attribute("width")
+        @height = element.int_attribute("height")
+        @tilewidth = element.int_attribute("tilewidth")
+        @tileheight = element.int_attribute("tileheight")
+      rescue RuntimeError
+        @errors << "map element had invalid attributes"
+      end
+
+      @tilesets = []
+      @layers = []
+
+      child = element.first_child_element
+      while child
+        case child.name
+        when 'tileset'
+          tileset = Tileset.new
+          @tilesets << tileset
+          if !tileset.process(child)
+            @errors << "tileset #{@tilesets.length} was invalid"
+          end
+        when 'layer'
+          layer = Layer.new
+          @layers << layer
+          if !layer.process(child)
+            @errors << "layer #{@layers.length} was invalid"
+          end
+        end
+        child = child.next_sibling_element
+      end
+
+      if @tilesets.empty?
+        @errors << "map had no tilesets"
+      end
+      if @layers.empty?
+        @errors << "map had no layers"
+      end
+
+      @errors.empty?
+    end
+  end
+
   class App
     DB_VERSION = 1
 
