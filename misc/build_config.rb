@@ -17,6 +17,7 @@ MRuby::Build.new do |conf|
   conf.gem :github => "mattn/mruby-sqlite3"
   conf.gem :github => "mattn/mruby-json"
   conf.gem :github => "mattn/mruby-base64"
+  conf.gem :github => "h2so5/mruby-tinyxml2"
 
   # include the default GEMs
   conf.gembox 'default'
