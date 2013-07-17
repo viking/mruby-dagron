@@ -1,97 +1,145 @@
 <!DOCTYPE html>
 <html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Dagron</title>
+    <script type="text/javascript" src="static/jquery-2.0.3.min.js"></script>
+    <script type="text/javascript" src="static/jquery-ui-1.10.3.custom.js"></script>
+    <script type="text/javascript" src="static/underscore-min.js"></script>
+    <script type="text/javascript" src="static/backbone-min.js"></script>
+    <script type="text/javascript" src="static/skel.min.js">{preset:"default"}</script>
+    <link rel="stylesheet" type="text/css" href="static/jquery-ui-1.10.3.custom.css"/>
+    <link rel="stylesheet" type="text/css" href="static/style.css"/>
+  </head>
 
-<head>
-<meta charset="utf-8">
-<title>Dagron</title>
-<script type="text/javascript" src="static/jquery-2.0.3.min.js"></script>
-<script type="text/javascript" src="static/underscore-min.js"></script>
-<script type="text/javascript" src="static/backbone-min.js"></script>
-<script type="text/javascript" src="static/skel.min.js">{preset:"default"}</script>
-<link rel="stylesheet" type="text/css" href="static/style.css"/>
-</head>
+  <body>
+    <header>
+      <h1>Dagron!</h1>
+    </header>
 
-<body>
+    <section id="app">
+      <section id="maps">
+        <header>
+          <h2>Maps</h2>
+        </header>
 
-<div id="app">
-  <header>
-    <h1>Maps</h1>
-  </header>
-
-  <section id="maps">
-  </section>
-
-  <section id="new-map">
-    <h2>New map</h2>
-    <form action="maps" method="post" enctype="multipart/form-data">
-      <div class="row">
-        <div class="4u">
-          <label>Name: <input name="map[name]" type="text"/></label>
+        <div class="row quarter header">
+          <div class="2u">Name</div>
+          <div class="2u">Width</div>
+          <div class="2u">Height</div>
+          <div class="2u">Tile-width</div>
+          <div class="2u">Tile-height</div>
         </div>
-        <div class="4u">
-          <label>Map: <input name="map[file]" type="file"/></label>
-        </div>
-        <div class="4u">
-          <input type="submit" />
-        </div>
-      </div>
-    </form>
-  </section>
-</div>
+      </section>
 
-<script type="text/template" id="map-template">
-<div class="4u"><%= id %></div>
-<div class="4u"><%= name %></div>
-</script>
+      <section id="new-map">
+        <header>
+          <h2>New map</h2>
+        </header>
 
-<script type="text/javascript">
-$(function() {
-  var Map = Backbone.Model.extend({
-    defaults: function() {
-      return {
-        name: "New map"
-      }
-    }
-  });
+        <form action="maps" method="post" enctype="multipart/form-data">
+          <div class="row">
+            <div class="4u">
+              <label>Name: <input name="map[name]" type="text"/></label>
+            </div>
+            <div class="4u">
+              <label>Map: <input name="map[file]" type="file"/></label>
+            </div>
+            <div class="4u">
+              <input type="submit" />
+            </div>
+          </div>
+        </form>
+      </section>
+    </section>
 
-  var MapList = Backbone.Collection.extend({
-    model: Map,
-    url: '/maps'
-  });
-  var Maps = new MapList;
+    <script type="text/template" id="map-template">
+      <div class="2u"><%= name %></div>
+      <div class="2u"><%= width %></div>
+      <div class="2u"><%= height %></div>
+      <div class="2u"><%= tilewidth %></div>
+      <div class="2u"><%= tileheight %></div>
+      <div class="2u"><span class="ui-icon ui-icon-image"></span></div>
+    </script>
 
-  var MapView = Backbone.View.extend({
-    tagName: 'div',
-    className: 'row',
-    template: _.template($('#map-template').html()),
-    initialize: function() {
-      this.listenTo(this.model, 'change', this.render);
-      this.listenTo(this.model, 'destroy', this.remove);
-    },
-    render: function() {
-      this.$el.html(this.template(this.model.attributes));
-      return this;
-    }
-  });
+    <script type="text/javascript">
+      $(function() {
+        var Map = Backbone.Model.extend({
+          defaults: function() {
+            return {
+              name: "New map"
+            }
+          }
+        });
 
-  var AppView = Backbone.View.extend({
-    el: $('#app'),
-    initialize: function() {
-      this.listenTo(Maps, 'add', this.addOne);
-      this.listenTo(Maps, 'reset', this.addAll);
-      this.listenTo(Maps, 'all', this.render);
-      Maps.fetch();
-    },
-    addOne: function(map) {
-      var view = new MapView({model: map});
-      this.$("#maps").append(view.render().el);
-    },
-    addAll: function() {
-      Maps.each(this.addOne, this);
-    },
-  });
-  var App = new AppView;
-});
-</script>
-</body>
+        var MapList = Backbone.Collection.extend({
+          model: Map,
+          url: '/maps'
+        });
+        var Maps = new MapList;
+
+        var MapView = Backbone.View.extend({
+          tagName: 'div',
+          className: 'row quarter',
+          template: _.template($('#map-template').html()),
+          initialize: function() {
+            this.listenTo(this.model, 'change', this.render);
+            this.listenTo(this.model, 'destroy', this.remove);
+          },
+          render: function() {
+            this.$el.html(this.template(this.model.attributes));
+            return this;
+          }
+        });
+
+        var NewMapView = Backbone.View.extend({
+          el: $('#new-map'),
+          events: {
+            'submit form': 'submit'
+          },
+          initialize: function() {
+            this.state = 'start';
+          },
+          submit: function(e) {
+            e.preventDefault();
+            var form = $(e.target);
+            var formData = new FormData(e.target);
+            $.ajax({
+              url: form.attr('action'),
+              type: 'POST',
+              dataType: 'json',
+              success: function(data) {
+                if (data.success) {
+                  Maps.fetch();
+                }
+              },
+              data: formData,
+              cache: false,
+              contentType: false,
+              processData: false
+            });
+          }
+        });
+        var NewMap = new NewMapView;
+
+        var AppView = Backbone.View.extend({
+          el: $('#app'),
+          initialize: function() {
+            this.listenTo(Maps, 'add', this.addOne);
+            this.listenTo(Maps, 'reset', this.addAll);
+            this.listenTo(Maps, 'all', this.render);
+            Maps.fetch();
+          },
+          addOne: function(map) {
+            var view = new MapView({model: map});
+            this.$("#maps").append(view.render().el);
+          },
+          addAll: function() {
+            Maps.each(this.addOne, this);
+          },
+        });
+        var App = new AppView;
+      });
+    </script>
+  </body>
 </html>

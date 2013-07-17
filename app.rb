@@ -471,8 +471,8 @@ module Dagron
         case version
         when 0
           @db.execute_batch("CREATE TABLE schema_info (version INTEGER)")
-          @db.execute_batch("CREATE TABLE maps (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, data BLOB, filename TEXT)")
-          @db.execute_batch("CREATE TABLE images (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, data BLOB, filename TEXT)")
+          @db.execute_batch("CREATE TABLE maps (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, width INTEGER, height INTEGER, tilewidth INTEGER, tileheight INTEGER, data BLOB, filename TEXT)")
+          @db.execute_batch("CREATE TABLE images (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, width INTEGER, height INTEGER, data BLOB, filename TEXT)")
         end
         version += 1
         @db.execute_batch("DELETE FROM schema_info; INSERT INTO schema_info VALUES (#{version})")
@@ -492,7 +492,7 @@ module Dagron
 
     def maps(env)
       maps = []
-      @db.execute('SELECT id, name FROM maps') do |row, fields|
+      @db.execute('SELECT id, name, width, height, tilewidth, tileheight FROM maps') do |row, fields|
         hash = {}
         fields.each_with_index do |field, i|
           hash[field] = row[i]
@@ -503,27 +503,43 @@ module Dagron
       [200, {'Content-Type' => 'application/json'}, body]
     end
 
-    def new_map(env)
+    def create_map(env)
       name = nil
       data = nil
       filename = nil
       env['params'].each do |param|
-        case param[:name]
-        when "map[name]"
+        if param[:name] == "map[name]"
           name = param[:value]
-        when "map[file]"
+        elsif param[:name] == "map[file]" && param[:filename]
           data = param[:value]
           filename = param[:filename]
         end
       end
 
-      result = nil
-      begin
-        @db.execute_batch('INSERT INTO maps (name, data, filename) VALUES(?, ?, ?)', name, data, filename)
-        result = { 'success' => true }
-      rescue Exception => e
-        result = { 'success' => false, 'error' => e.message }
+      errors = []
+      errors.push("name is required") if name.nil?
+      errors.push("file is required") if data.nil?
+
+      if errors.empty?
+        map = Map.new
+        if map.parse(data)
+          begin
+            @db.execute_batch('INSERT INTO maps (name, width, height, tilewidth, tileheight, data, filename) VALUES(?, ?, ?, ?, ?, ?, ?)', name, map.width, map.height, map.tilewidth, map.tileheight, data, filename)
+          rescue Exception => e
+            errors.push(e.message)
+          end
+        else
+          errors.push("map errors: #{map.errors.join(";")}")
+        end
       end
+
+      result =
+        if errors.empty?
+          { 'success' => true }
+        else
+          { 'success' => false, 'errors' => errors }
+        end
+
       [200, {'Content-Type' => "application/json"}, JSON.stringify(result)]
     end
 
@@ -586,18 +602,18 @@ module Dagron
         path = path[1..-1]
       end
 
-      result = nil
-      if path == ""
-        result = index(env)
-      elsif path == "maps"
-        if env['REQUEST_METHOD'] == 'POST'
-          result = new_map(env)
-        else
-          result = maps(env)
+      result =
+        if path == ""
+          index(env)
+        elsif path == "maps"
+          if env['REQUEST_METHOD'] == 'POST'
+            create_map(env)
+          else
+            maps(env)
+          end
+        elsif path[0..6] == "static/"
+          serve(env)
         end
-      elsif path[0..6] == "static/"
-        result = serve(env)
-      end
 
       if result
         return result

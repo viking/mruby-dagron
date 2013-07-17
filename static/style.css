@@ -1,5 +1,29 @@
+html {
+  background-image: -webkit-gradient(
+    linear,
+    left center,
+    right center,
+    from(orange), to(red));
+}
+
 body {
   width: 1000px;
   margin: 0 auto;
+  font-family: verdana;
+}
+
+header {
+  font-family: georgia;
+}
+
+#app {
+  background-color: white;
   border: 1px solid black;
+  padding: 10px;
+}
+
+#maps {
+}
+#maps .header {
+  font-weight: bold;
 }
